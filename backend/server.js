@@ -7,12 +7,13 @@ import cors from 'cors'
 const app = express()
 const port = process.env.PORT || 3001
 
+// connect to DB
 const pool = mysql.createPool({
-  user: 'root',
-  password: 'root',
-  host: 'localhost',
-  database: 'bank',
-  port: 8889,
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'root',
+  database: process.env.DB_NAME || 'bank',
+  port: Number(process.env.DB_PORT || 3306),
 })
 
 async function query(sql, params) {
