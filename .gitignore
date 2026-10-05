@@ -1,0 +1,5 @@
+**/node_modules/
+tests/test-results/
+tests/playwright-report/
+frontend/.next/
+.DS_Store
