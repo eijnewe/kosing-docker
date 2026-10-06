@@ -14,12 +14,10 @@ import {
 import { Logo } from "@/components/logo"
 
 export function Navbar() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
-
-  useEffect(() => {
-    const token = sessionStorage.getItem("token")
-    setIsLoggedIn(!!token)
-  }, [])
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    if (typeof window === "undefined") return false
+    return !!sessionStorage.getItem("token")
+  })
 
   return (
     <NavigationMenu className="w-full max-w-svw">
