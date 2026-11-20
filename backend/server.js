@@ -1,3 +1,6 @@
+import { randomBytes } from 'node:crypto'
+import { validateAmount } from './src/validateAmount.js'
+
 import mysql from 'mysql2/promise'
 
 import express from 'express'
@@ -14,6 +17,7 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD || 'root',
   database: process.env.DB_NAME || 'bank',
   port: Number(process.env.DB_PORT || 3306),
+  timezone: 'Z',
 })
 
 async function query(sql, params) {
@@ -25,16 +29,8 @@ async function query(sql, params) {
 app.use(cors())
 app.use(bodyParser.json())
 
-// Generera engångslösenord
-function generateOTP() {
-  // Generera en sexsiffrig numerisk OTP
-  const otp = Math.floor(100000 + Math.random() * 900000)
-  return otp.toString()
-}
-
-// Din kod här. Skriv dina routes:
-
 async function getSessionFromToken(token) {
+  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return
   const sql = 'SELECT * FROM sessions WHERE token = ?'
   const params = [token]
 
@@ -44,7 +40,7 @@ async function getSessionFromToken(token) {
 }
 
 async function getAccountFromUserId(userId) {
-  const sql = 'SELECT * FROM accounts WHERE user_id = ?'
+  const sql = 'SELECT * FROM accounts WHERE user_id = ? ORDER BY id LIMIT 1'
   const params = [userId]
 
   const accounts = await query(sql, params)
@@ -74,7 +70,7 @@ app.post('/users', async (req, res) => {
 
     res.send('User created')
   } catch (error) {
-    console.error(error)
+    console.error(error.code ?? error.name)
     res.status(500).send('Error creating user')
   }
 })
@@ -84,14 +80,12 @@ app.post('/users', async (req, res) => {
 app.post('/sessions', async (req, res) => {
   const { username, password } = req.body
 
-  console.log('Login:', username, password)
 
   try {
     const sql = 'SELECT * FROM users WHERE username = ? AND password = ?'
     const params = [username, password]
 
     const users = await query(sql, params)
-    console.log('Users from database:', users)
 
     if (users.length === 0) {
       return res.status(401).json({
@@ -101,22 +95,20 @@ app.post('/sessions', async (req, res) => {
 
     const user = users[0]
 
-    console.log('Found user:', user)
 
-    const token = generateOTP()
+    const token = randomBytes(32).toString('hex')
 
     const sessionSql = 'INSERT INTO sessions (user_id, token) VALUES (?, ?)'
     const sessionParams = [user.id, token]
 
     await query(sessionSql, sessionParams)
 
-    console.log('Session created:', token)
 
     res.status(200).json({
       token,
     })
   } catch (error) {
-    console.error(error)
+    console.error(error.code ?? error.name)
     res.status(500).send('Error logging in')
   }
 })
@@ -124,12 +116,11 @@ app.post('/sessions', async (req, res) => {
 //saldo
 
 app.post('/me/accounts', async (req, res) => {
-  const { token } = req.body
+  const { token } = req.body ?? {}
 
   try {
     const session = await getSessionFromToken(token)
 
-    console.log('Session:', session)
     if (!session) {
       return res.status(401).json({
         message: 'Ogiltig token',
@@ -137,7 +128,6 @@ app.post('/me/accounts', async (req, res) => {
     }
 
     const account = await getAccountFromUserId(session.user_id)
-    console.log('Account:', account)
     if (!account) {
       return res.status(404).json({
         message: 'Inget konto hittades',
@@ -148,49 +138,101 @@ app.post('/me/accounts', async (req, res) => {
       amount: account.amount,
     })
   } catch (error) {
-    console.error(error)
+    console.error(error.code ?? error.name)
     res.status(500).send('Error getting account')
   }
 })
-//sätta in
+app.get('/me/accounts/transactions', async (req, res) => {
+  const session = await getSessionFromToken(req.get('Authorization')?.match(/^Bearer (.+)$/i)?.[1])
+  if (!session) {
+    return res.status(401).json({ message: 'Inloggningstoken saknas eller är ogiltig' })
+  }
+
+  const transactions = await query(
+    `SELECT t.id, t.amount, t.created_at AS createdAt
+     FROM transactions t JOIN accounts a ON a.id = t.account_id
+     WHERE a.user_id = ?
+     ORDER BY t.created_at DESC, t.id DESC`,
+    [session.user_id],
+  )
+
+  res.set('Cache-Control', 'no-store').json({ transactions })
+})
 
 app.post('/me/accounts/transactions', async (req, res) => {
-  const { token, amount } = req.body
+  const { token, amount } = req.body ?? {}
+  const session = await getSessionFromToken(token)
+  if (!session) {
+    return res.status(401).json({ message: 'Inloggningstoken saknas eller är ogiltig' })
+  }
+  if (!validateAmount(amount)) {
+    return res.status(400).json({ message: 'Ange ett positivt belopp med högst två decimaler.' })
+  }
 
+  const connection = await pool.getConnection()
   try {
-    const session = await getSessionFromToken(token)
-
-    if (!session) {
-      return res.status(401).json({
-        message: 'Ogiltig token',
-      })
-    }
-
-    const account = await getAccountFromUserId(session.user_id)
-
+    await connection.beginTransaction()
+    const [accounts] = await connection.execute(
+      'SELECT id, amount FROM accounts WHERE user_id = ? ORDER BY id LIMIT 1 FOR UPDATE',
+      [session.user_id],
+    )
+    const account = accounts[0]
     if (!account) {
-      return res.status(404).json({
-        message: 'Inget konto hittades',
-      })
+      await connection.rollback()
+      return res.status(404).json({ message: 'Inget konto hittades' })
     }
 
-    const newAmount = Number(account.amount) + Number(amount)
+    const newBalanceInOre = Math.round(Number(account.amount) * 100) + Math.round(amount * 100)
+    if (newBalanceInOre > 9_999_999_999) {
+      await connection.rollback()
+      return res.status(400).json({ message: 'Insättningen överskrider högsta tillåtna saldo.' })
+    }
 
-    const sql = 'UPDATE accounts SET amount = ? WHERE id = ?'
-    const params = [newAmount, account.id]
-
-    await query(sql, params)
-
-    res.status(200).json({
-      amount: newAmount,
-    })
+    const newAmount = (newBalanceInOre / 100).toFixed(2)
+    await connection.execute('UPDATE accounts SET amount = ? WHERE id = ?', [newAmount, account.id])
+    await connection.execute('INSERT INTO transactions (account_id, amount) VALUES (?, ?)', [
+      account.id, amount.toFixed(2),
+    ])
+    await connection.commit()
+    res.json({ amount: Number(newAmount) })
   } catch (error) {
-    console.error(error)
-    res.status(500).send('Error making transaction')
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
   }
 })
 
-// Starta servern
+app.get('/health', async (_req, res) => {
+  await query('SELECT 1')
+  res.sendStatus(200)
+})
+
+app.use((error, _req, res, _next) => {
+  console.error(error.code ?? error.name)
+  const status = error.status === 400 ? 400 : 500
+  res.status(status).json({ message: status === 400 ? 'Ogiltig förfrågan' : 'Ett serverfel uppstod' })
+})
+
+async function migrateDatabase() {
+  const [tokenColumn] = await query("SHOW COLUMNS FROM sessions LIKE 'token'")
+  if (tokenColumn.Type === 'varchar(6)') {
+    await query('ALTER TABLE sessions MODIFY token VARCHAR(64) NOT NULL')
+  }
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      account_id INT UNSIGNED NOT NULL,
+      amount DECIMAL(10,2) NOT NULL,
+      created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+      INDEX transactions_account_date (account_id, created_at, id),
+      FOREIGN KEY (account_id) REFERENCES accounts(id)
+    ) ENGINE=InnoDB
+  `)
+}
+
+await migrateDatabase()
 app.listen(port, () => {
   console.log(`Bankens backend körs på http://localhost:${port}`)
 })

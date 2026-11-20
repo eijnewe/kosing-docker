@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 import { cn } from "@/lib/utils"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -20,12 +20,13 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { apiURL, useBankData } from "@/hooks/use-bank-data"
 
 import {
   Item,
   ItemActions,
   ItemContent,
-  ItemDescription,
   ItemTitle,
 } from "@/components/ui/item"
 
@@ -33,75 +34,58 @@ export function AccountForm({
   className,
   ...props
 }: React.ComponentProps<"div">) {
-  const [balance, setBalance] = useState<number | null>(null)
-
-  useEffect(() => {
-    async function getBalance() {
-      const token = sessionStorage.getItem("token")
-
-      if (!token) {
-        return
-      }
-
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/me/accounts`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            token,
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        return
-      }
-
-      const data = await response.json()
-
-      setBalance(data.amount)
-    }
-
-    getBalance()
-  }, [])
+  const router = useRouter()
+  const { data, setData, error } = useBankData<{ amount: number | string }>("/me/accounts", "POST")
+  const [depositError, setDepositError] = useState("")
+  const [pending, setPending] = useState(false)
 
   async function handleSubmit(event: React.SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
-    const formData = new FormData(event.currentTarget)
-
-    const amount = formData.get("amount")
+    const form = event.currentTarget
+    const amount = Number(new FormData(form).get("amount"))
     const token = sessionStorage.getItem("token")
-
-    const response = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/me/accounts/transactions`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          token,
-          amount: Number(amount),
-        }),
-      }
-    )
-    if (!response.ok) {
-      alert("Något gick fel.")
+    if (!token) {
+      router.replace("/login")
       return
     }
 
-    const data = await response.json()
+    setPending(true)
+    setDepositError("")
+    try {
+      const response = await fetch(`${apiURL}/me/accounts/transactions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, amount }),
+      })
 
-    setBalance(data.amount)
+      if (response.status === 401) {
+        sessionStorage.removeItem("token")
+        router.replace("/login")
+        return
+      }
+      const result = await response.json()
+      if (!response.ok) {
+        setDepositError(result.message)
+        return
+      }
+
+      setData(result)
+      form.reset()
+    } catch {
+      setDepositError("Kunde inte bekräfta insättningen. Kontrollera saldo och historik.")
+    } finally {
+      setPending(false)
+    }
   }
+
+  if (error) return <p role="alert">{error}</p>
+  if (!data) return <p role="status">Laddar…</p>
+
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card>
         <CardHeader>
-          <CardTitle>Mitt konto</CardTitle>
+          <CardTitle><h1>Mitt konto</h1></CardTitle>
           <CardDescription>
             Ditt saldo och dina kontouppgifter. Du kan även sätta in pengar här.
           </CardDescription>
@@ -110,12 +94,9 @@ export function AccountForm({
           <Item variant="muted" size="sm">
             <ItemContent>
               <ItemTitle>Saldo</ItemTitle>
-              {/*    <ItemDescription>
-                A simple item with title and description.
-              </ItemDescription> */}
             </ItemContent>
             <ItemActions>
-              {balance !== null ? `${balance} kr` : "Laddar..."}
+              {new Intl.NumberFormat("sv-SE", { style: "currency", currency: "SEK" }).format(Number(data.amount))}
             </ItemActions>
           </Item>
           <form onSubmit={handleSubmit}>
@@ -128,8 +109,8 @@ export function AccountForm({
                   type="number"
                   placeholder="0,00kr"
                   required
-                  step="0.05"
-                  min="0.05"
+                  step="0.01"
+                  min="0.01"
                 />
                 <FieldDescription>
                   Ange beloppet du vill sätta in på ditt konto.
@@ -137,12 +118,14 @@ export function AccountForm({
               </Field>
 
               <Field>
-                <Button type="submit">Sätt in pengar</Button>
+                <Button type="submit" disabled={pending}>Sätt in pengar</Button>
+                {depositError && <p role="alert">{depositError}</p>}
               </Field>
             </FieldGroup>
           </form>
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex flex-wrap gap-4">
+          <Link href="/transactions" className="underline">Transaktioner</Link>
           <Link
             href="/login"
             className={cn(

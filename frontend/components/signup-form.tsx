@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
+import { apiURL } from "@/hooks/use-bank-data"
 import { useRouter } from "next/navigation"
 
 export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
@@ -33,13 +34,10 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
       return
     } */
 
-    console.log("username:", username)
-    console.log("password:", password)
-
-    console.log("skickar POST /users")
 
 
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/users`,  {
+
+    const response = await fetch(`${apiURL}/users`,  {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -50,7 +48,6 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
       }),
     })
 
-    console.log("response:", response.status)
 
     if (!response.ok) {
       alert("Något gick fel när kontot skulle skapas.")
