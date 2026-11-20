@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
+import { apiURL } from "@/hooks/use-bank-data"
 import { useRouter } from "next/navigation"
 
 export function LoginForm({
@@ -34,7 +35,7 @@ export function LoginForm({
     const password = formData.get("password")
 
     const response = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/sessions`,
+      `${apiURL}/sessions`,
       {
         method: "POST",
         headers: {

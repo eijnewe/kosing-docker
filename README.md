@@ -174,33 +174,42 @@ Body: { "username": "Joe", "password": "hemligt" }
 
 POST /sessions
 Body: { "username": "Joe", "password": "hemligt" }
-Response: { "token": "123456" }
+Response: { "token": "<sessionstoken>" }
 
 POST /me/accounts
-Body: { "token": "123456" }
+Body: { "token": "<sessionstoken>" }
 Response: { "amount": 0 }
 
 POST /me/accounts/transactions
-Body: { "token": "123456", "amount": 250 }
+Body: { "token": "<sessionstoken>", "amount": 250 }
 Response: { "amount": 250 }
 ```
 
-Engångslösenordet ska vara en sträng med sex siffror. En ogiltig token till `/me/accounts` ska ge status `401` eller `403`.
+Sessionstoken är en slumpmässig sträng med 64 hextecken. Användare med äldre sessioner behöver logga in igen efter uppdateringen. En ogiltig token till `/me/accounts` ska ge status `401` eller `403`.
+
+### Transaktionshistorik
+
+Sidan `/transactions` nås från **Mitt konto**. Backend skapar historiktabellen när tjänsten startar, även om MySQL redan har en databasvolym. Befintliga saldon behålls. Insättningar som gjordes innan historiken infördes har inga historikposter.
+
+`GET /me/accounts/transactions` använder HTTP-headern `Authorization: Bearer <sessionstoken>` och returnerar `{ "transactions": [...] }` med de senaste insättningarna först. Saknad eller ogiltig token ger HTTP 401.
 
 ### Kör samma tester lokalt
 
-Installera först dependencies i alla tre mappar och bygg frontend:
+Kör från projektets rot med Docker igång.
 
 ```bash
 npm ci --prefix frontend
 npm ci --prefix backend
-npm ci --prefix tests
-cd tests && npx playwright install chromium && cd ..
+npm run lint --prefix frontend
 npm run build --prefix frontend
-npm test --prefix tests
+npm test --prefix backend
+(cd frontend && npx playwright install chromium)
+docker compose -f compose.test.yml up --build --wait --wait-timeout 180
+npm run test:e2e --prefix frontend
+docker compose -f compose.test.yml down --volumes
 ```
 
-Testkommandot startar frontend och backend automatiskt och stänger dem efter testkörningen.
+Testmiljön använder frontend på `127.0.0.1:3002`, backend på `127.0.0.1:3003` och en tillfällig MySQL-databas. GitHub Actions kör samma kontroller vid push och pull request till `main`. Deploy-jobbet kan bara köras vid push till `main` efter godkända kontroller.
 
 ## Publicera på aws
 

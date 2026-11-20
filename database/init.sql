@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS sessions (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id INT UNSIGNED NOT NULL,
-  token VARCHAR(6) NOT NULL,
+  token VARCHAR(64) NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY sessions_token_unique (token),
   FOREIGN KEY (user_id) REFERENCES users(id)

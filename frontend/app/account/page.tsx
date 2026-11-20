@@ -1,4 +1,3 @@
-import { LoginForm } from "@/components/login-form"
 import { Icon } from "lucide-react"
 
 import { cowHead } from "@lucide/lab"
